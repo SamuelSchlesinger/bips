@@ -1,0 +1,248 @@
+<pre>
+  BIP: ?
+  Layer: Consensus (soft fork)
+  Title: Post-Quantum Cryptographic Opcodes for Bitcoin Security
+  Author: Samuel Schlesinger <sgschlesinger@gmail.com>
+  Comments-Summary: No comments yet.
+  Comments-URI: 
+  Status: Draft
+  Type: Standards Track
+  Created: 2025-04-20
+  License: BSD-2-Clause
+  Post-History: 
+</pre>
+
+== TODO ==
+
+There is currently a bug in this proposal. In particular, the current maximum
+size for a byte vector on the stack is 520 bytes and these signatures are much
+longer than that. There are two natural options: increase the maximum size of
+byte vectors on the stack to 32kB, or implement opcodes for verifying
+signatures which are spread across multiple byte vectors.
+
+This makes me feel like maybe SLH-DSA is just not reasonable, and we should
+only propose ML-DSA. Implementing all of the NIST post-quantum crypto proposals
+seems more reasonable, but 30kB is crazy.
+
+== Abstract ==
+
+This BIP proposes new Script opcodes implementing quantum-resistant
+cryptographic primitives standardized by NIST in FIPS 204 (ML-DSA) and FIPS 205
+(SLH-DSA). These additions mitigate risks posed by cryptographically relevant
+quantum computers that could break ECDSA-based signatures. The proposal focuses
+on the highest security parameter sets to ensure maximum protection for
+monetary value, and explains both the attack surfaces exposed by quantum
+computers and migration strategies.
+
+== Copyright ==
+
+This BIP is licensed under the BSD 2-clause license.
+
+== Motivation ==
+
+=== Quantum Computing Threat Model ===
+
+Bitcoin's security fundamentally relies on ECDSA signatures, which are
+vulnerable to attacks using cryptographically relevant quantum computers. A
+sufficiently powerful quantum computer could solve the Elliptic Curve Discrete
+Logarithm Problem (ECDLP) using Shor's algorithm, which efficiently solves
+instances of the Hidden Subgroup Problem for finite abelian groups.
+
+The attack surface varies based on how Bitcoin is used:
+
+# '''Exposed Public Keys''': Any address that has been used to send funds and subsequently spent from has its full public key exposed on the blockchain. These public keys could be processed by a quantum computer running Shor's algorithm to derive the corresponding private keys, allowing direct theft of funds.
+
+# '''Unrevealed Public Keys''': Even for P2PKH/P2WPKH addresses that have received funds but never spent (where only the hash of the public key is visible on-chain), a different attack vector exists. If a transaction attempting to spend from such an address is broadcast to the network but not yet confirmed, an attacker with access to a quantum computer could:
+## Capture the transaction from the mempool
+## Extract the now-revealed public key from the transaction
+## Quickly derive the private key using Shor's algorithm
+## Create and broadcast a competing transaction with higher fees sending the funds to themselves
+
+# '''Miner Collusion Protection''': A theoretical partial mitigation exists where users could send transactions directly to trusted miners who agree not to broadcast the transaction (and thus the public key) before including it in a block. However, this creates centralization pressures and trust assumptions contrary to Bitcoin's design principles.
+
+While large-scale quantum computers capable of breaking 256-bit elliptic curve
+cryptography do not yet exist, their future development represents a credible
+risk that requires proactive mitigation.
+
+=== Post-Quantum Security Solution ===
+
+This BIP introduces new opcodes implementing post-quantum cryptographic (PQC)
+algorithms resistant to quantum attacks. By adding these opcodes, Bitcoin can:
+
+* Provide a robust transition path to quantum-resistant security
+* Enable hybrid classical/post-quantum security models
+* Protect against future quantum computing advances 
+* Ensure Bitcoin's long-term security and value preservation
+
+== Specification ==
+
+This proposal introduces new opcodes implementing NIST-standardized
+post-quantum signature algorithms, focusing only on the highest security
+parameter sets.
+
+=== ML-DSA Signature Verification Opcode (FIPS 204) ===
+
+* <code>OP_MLDSA_CHECKSIG</code> (0xb0): Verifies a ML-DSA-87 signature (highest security level)
+** Input stack: <code>[... signature publickey message]</code>
+** Output stack: <code>[... bool]</code>
+** Returns true if the signature is valid for the message under the provided public key
+** Uses ML-DSA-87: Security level 5 (256-bit classical, 128-bit quantum security)
+** Invalid public keys will cause the operation to return false
+
+=== SLH-DSA Signature Verification Opcode (FIPS 205) ===
+
+* <code>OP_SLHDSA_CHECKSIG</code> (0xb1): Verifies a SLH-DSA signature
+** Input stack: <code>[... signature publickey message]</code>
+** Output stack: <code>[... bool]</code>
+** Returns true if the signature is valid for the message under the provided public key
+** Uses SLH-DSA-SHA2-256s: Security level 5 (256-bit security)
+** Invalid public keys will cause the operation to return false
+
+=== Hybrid Protection Scripts ===
+
+To protect funds against quantum attacks, this BIP enables creation of hybrid
+scripts that require satisfaction of both classical and post-quantum signature
+schemes. These scripts use standard Bitcoin Script capabilities combined with
+the new opcodes. In the short term, it is recommended that UTXOs be protected
+by hybrid scripts like these.
+
+* Reference scripts and additional script templates will be provided in the reference implementation.
+
+== Rationale ==
+
+=== Focus on Highest Security Parameter Sets ===
+
+This proposal deliberately focuses only on the highest security parameter sets for each algorithm:
+
+* ML-DSA-87 (256-bit security)
+* SLH-DSA-SHA2-256s (256-bit security)
+
+The rationale for this approach:
+
+# Bitcoin secures monetary value, warranting maximum security margins
+# Simplifies implementation by supporting fewer parameter sets
+# Provides more conservative security assumptions against future cryptanalytic advances
+# Ensures consistent security levels across algorithms
+# Avoids potential confusion and security downgrade attacks
+
+=== Algorithm Selection and Complementary Properties ===
+
+NIST has selected ML-DSA (FIPS 204) and SLH-DSA (FIPS 205) as post-quantum
+signature standards after extensive review. These algorithms offer
+complementary properties:
+
+* ML-DSA-87 (lattice-based):
+** Relatively smaller signatures (3.3 KB) compared to hash-based alternatives
+** Efficient verification
+** Security based on Module Learning With Errors problem
+
+* SLH-DSA-SHA2-256s (hash-based):
+** Security based solely on the properties of cryptographic hash functions
+** Conservative design with longest history of cryptanalysis
+** Strongest theoretical security foundation among post-quantum algorithms
+** Optimized for smaller signature size (~30 KB) while maintaining highest security level
+
+Supporting both algorithms provides cryptographic diversity and hedges against
+potential breakthroughs in cryptanalysis of either approach.
+
+=== Hybrid Protection Model ===
+
+The hybrid protection model (requiring both classical and post-quantum signatures) provides several advantages:
+
+# '''Strong Security Guarantee''': Funds remain secure if either cryptosystem remains unbroken
+# '''Smooth Transition''': Allows gradual migration to post-quantum security
+# '''Immediate Protection''': Users can secure funds against future quantum attacks today
+# '''Conservative Approach''': Acknowledges that post-quantum algorithms have less cryptanalytic history
+
+=== Size and Performance Implications ===
+
+Post-quantum signatures are significantly larger than ECDSA:
+
+* ML-DSA-87 public keys: ~1.8 KB (vs. 33 bytes for compressed ECDSA)
+* ML-DSA-87 signatures: ~3.3 KB (vs. 71-72 bytes for ECDSA)
+
+* SLH-DSA-SHA2-256s public keys: 32 bytes
+* SLH-DSA-SHA2-256s signatures: ~30 KB
+
+These size increases impact transaction costs but are mitigated through:
+
+# Native opcode implementation (vs. script implementation)
+# Optional use - only for users who require quantum resistance
+# Gradual transition allowing time for scalability improvements
+# The value proposition outweighs the cost for high-value Bitcoin security
+
+== Quantum Attack Surfaces in Detail ==
+
+=== Exposed Public Keys: Extracting Private Keys ===
+
+When a Bitcoin address is spent from, the full public key is revealed on the
+blockchain. A sufficiently large quantum computer (~1536 logical qubits) could
+derive the private key from this public key through solving the ECDLP on the
+public key using the chosen generator for ECDSA as the base. While such
+machines don't exist today, they represent a plausible future threat.
+
+=== Transaction Hijacking Attack ===
+
+Even for addresses where only the hash of the public key is exposed, a
+different attack is possible:
+
+# User creates a transaction spending from a previously unused address
+# Transaction is broadcast to the network and enters mempools
+# Attacker with quantum computer intercepts the transaction, extracting the public key
+# Attacker uses Shor's algorithm to derive the private key
+# Attacker creates a competing transaction with higher fees to their own address
+# If the attacker's transaction confirms first, the funds are stolen
+
+This attack is particularly concerning because it could affect even cautiously
+stored bitcoin using an ECDSA public key which has never been spent from.
+
+=== Theoretical Mitigations Without New Opcodes ===
+
+Several theoretical mitigations exist without this BIP, but all have significant drawbacks:
+
+# '''Trusted Miner Transactions''': Users could send transactions directly to trusted miners who agree not to broadcast the transaction before including it in a block
+## Drawbacks: Introduces centralization and trust assumptions contrary to Bitcoin's principles
+# '''Address Hygiene''': Never reusing addresses and moving funds before quantum computers become viable
+## Drawbacks: Requires perfect operational security and doesn't protect against the transaction hijacking attack
+# '''Moving to Increasingly Complex Scripts''': Creating increasingly convoluted script conditions
+## Drawbacks: Limited by current script capabilities, increases transaction sizes, and introduces complexity
+
+The hybrid approach proposed in this BIP provides a cleaner, more robust
+solution that preserves Bitcoin's trustless nature.
+
+== Backwards Compatibility ==
+
+This BIP introduces new opcodes as a soft fork using the standard BIP9
+deployment mechanism. Nodes that haven't upgraded will see the new opcodes as
+OP_NOP operations, and will consider scripts using these opcodes as
+anyone-can-spend. For security, users should wait for activation before using
+the new opcodes.
+
+== Reference Implementation ==
+
+A reference implementation is available at: TODO
+
+== Test Vectors ==
+
+Test vectors for ML-DSA and SLH-DSA operations will be provided separately,
+derived from the official NIST test vectors.
+
+== Deployment ==
+
+This proposal will be deployed via BIP9 with the following parameters:
+
+* Bit: TBD
+* Start time: TBD
+* Timeout: TBD
+
+== Acknowledgments ==
+
+This BIP builds on the work of many researchers in post-quantum cryptography,
+particularly those who contributed to the NIST post-quantum standardization
+process and the development of FIPS 204 and FIPS 205.
+
+== References ==
+
+* FIPS 204: Module-Lattice-Based Digital Signature Standard (ML-DSA): https://csrc.nist.gov/pubs/fips/204/final
+* FIPS 205: Stateless Hash-Based Digital Signature Standard (SLH-DSA): https://csrc.nist.gov/pubs/fips/205/final
+* Shor, P. W. (1995). Polynomial-Time Algorithms for Prime Factorization and Discrete Logarithms on a Quantum Computer. https://www.arxiv.org/abs/quant-ph/9508027
